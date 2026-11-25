@@ -1,8 +1,9 @@
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
+from core.models import DaOrganizacao
 
-class Equipe(models.Model):
+class Equipe(DaOrganizacao):
     nome = models.CharField(max_length=100, verbose_name="Nome da Equipe de Suporte")
     descricao = models.TextField(blank=True, verbose_name="Atribuições da Equipe")
     email_contato = models.EmailField(verbose_name="E-mail da Equipe")
@@ -11,9 +12,16 @@ class Equipe(models.Model):
     class Meta:
         verbose_name = "Equipe"
         verbose_name_plural = "Equipes"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organizacao", "nome"],
+                name="equipe_nome_unica_por_org",
+            ),
+        ]
 
     def __str__(self):
         return self.nome
+
 
 class Prioridade(models.Model):
     NIVEL_CHOICES = [
@@ -36,6 +44,7 @@ class Prioridade(models.Model):
     def __str__(self):
         return f"{self.nome} ({self.get_nivel_display()})"
 
+
 class SLA(models.Model):
     prioridade = models.OneToOneField(Prioridade, on_delete=models.CASCADE, related_name="sla", verbose_name="Prioridade Associada")
     horas_resolucao = models.PositiveIntegerField(verbose_name="Tempo Máximo de SLA (Horas)")
@@ -48,7 +57,8 @@ class SLA(models.Model):
     def __str__(self):
         return f"SLA: {self.horas_resolucao}h para {self.prioridade.nome}"
 
-class Categoria(models.Model):
+
+class Categoria(DaOrganizacao):
     nome = models.CharField(max_length=100, verbose_name="Nome da Categoria")
     equipe = models.ForeignKey(Equipe, on_delete=models.CASCADE, related_name="categorias", verbose_name="Equipe Responsável")
     descricao = models.TextField(blank=True, verbose_name="Descrição")
@@ -57,11 +67,18 @@ class Categoria(models.Model):
     class Meta:
         verbose_name = "Categoria"
         verbose_name_plural = "Categorias"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organizacao", "nome"],
+                name="categoria_nome_unica_por_org",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.nome} ({self.equipe.nome})"
 
-class Chamado(models.Model):
+
+class Chamado(DaOrganizacao):
     STATUS_CHOICES = [
         ("aberto", "Aberto"),
         ("em_atendimento", "Em Atendimento"),
@@ -69,7 +86,7 @@ class Chamado(models.Model):
         ("fechado", "Fechado"),
     ]
 
-    protocolo = models.CharField(max_length=30, unique=True, verbose_name="Protocolo")
+    protocolo = models.CharField(max_length=30, verbose_name="Protocolo")
     titulo = models.CharField(max_length=200, verbose_name="Assunto do Chamado")
     descricao = models.TextField(verbose_name="Detalhamento do Problema")
     solicitante_nome = models.CharField(max_length=120, verbose_name="Nome do Solicitante")
@@ -86,6 +103,17 @@ class Chamado(models.Model):
         verbose_name = "Chamado"
         verbose_name_plural = "Chamados"
         ordering = ["-data_abertura"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organizacao", "protocolo"],
+                name="chamado_protocolo_unico_por_org",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["data_abertura"], name="helpdesk_ch_data_ab_idx"),
+            models.Index(fields=["status"], name="helpdesk_ch_status_idx"),
+            models.Index(fields=["organizacao", "status"], name="helpdesk_ch_org_stat_idx"),
+        ]
 
     def __str__(self):
         return f"[{self.protocolo}] {self.titulo} ({self.get_status_display()})"
@@ -100,7 +128,10 @@ class Chamado(models.Model):
     def save(self, *args, **kwargs):
         if not self.protocolo:
             ano = timezone.now().year
-            ultimo = Chamado.objects.filter(protocolo__startswith=f"HD-{ano}").count()
+            qs = Chamado.objects.filter(protocolo__startswith=f"HD-{ano}")
+            if self.organizacao_id:
+                qs = qs.filter(organizacao=self.organizacao)
+            ultimo = qs.count()
             self.protocolo = f"HD-{ano}-{ultimo+1001}"
 
         if not self.prazo_sla and self.prioridade_id:

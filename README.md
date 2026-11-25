@@ -1,69 +1,168 @@
-# 🎫 Help Desk & Gestão de SLA de Chamados
+# 🎫 Help Desk & Gestão de SLA de Chamados — P1 & P2 (Mini-SaaS)
 
 **Disciplina:** Laboratório de Programação Full Stack  
 **Professor:** Márcio Garrido  
 **Aluno:** Marcos Vinícius Silva Estrela  
 **Matrícula:** 202413893  
-**Avaliação:** P1 — MVP Funcional (Aula 12)  
-**Tema Escolhido:** Opção 4 — Help Desk / Chamados  
+**Avaliação:** P1 (MVP Funcional) + P2 (Multi-organização, DRF REST API, Dashboard e Relatórios)  
+**Tema Escolhido:** Opção 4 — Help Desk / Chamados com Gestão de SLA  
 
 ---
 
-## 📌 1. Visão Geral do Projeto (P1)
+## 📌 1. Visão Geral da Arquitetura
 
-Este projeto implementa o MVP funcional completo de um sistema de **Help Desk e Suporte Técnico** com cálculo automático de prazos de Acordo de Nível de Serviço (SLA) categorizados por prioridade e equipe responsável.
+O projeto evoluiu de um MVP monofolha (P1) para uma plataforma **Mini-SaaS Multi-tenant** (P2), atendendo integralmente ao conteúdo pedagógico das **Aulas 13 (DRF)**, **14 (Multi-organização: Isolamento de Dados)** e **17 (Dashboard e Relatórios)**.
 
-### As 5 Entidades da Rubrica:
-1. **`Equipe`**: Grupos técnicos responsáveis por resolver incidentes (Infraestrutura, Banco de Dados, etc.).
-2. **`Categoria`**: Tipos de incidentes vinculados à equipe competente.
-3. **`Prioridade`**: Níveis de urgência (`Crítica`, `Alta`, `Média`, `Baixa`).
-4. **`SLA`**: Definição do tempo máximo em horas acordado para cada prioridade.
-5. **`Chamado`**: Registro do ticket de suporte com protocolo único, solicitante, prazos calculados e parecer conclusivo.
-
-### Regra de Negócio P1 Implementada:
-- **Cálculo Automático de SLA:** Ao abrir o chamado, o sistema busca as horas estabelecidas no SLA da prioridade e projeta o `prazo_sla` exato.
-- **Auditoria de Conformidade:** Exibição visual em tempo real indicando se o chamado está dentro do prazo contratual ou com SLA violado/estourado.
+### As Entidades do Sistema:
+1. **`core.Organizacao`**: Inquilino/empresa dona dos dados.
+2. **`core.Perfil`**: Vínculo 1:1 com `auth.User`, definindo a organização e o papel (`admin` ou `operador`).
+3. **`helpdesk.Equipe`**: Grupos técnicos de suporte (vinculada à organização via `DaOrganizacao`).
+4. **`helpdesk.Categoria`**: Tipos de incidentes vinculados à equipe e à organização.
+5. **`helpdesk.Prioridade`**: Níveis de urgência (`Crítica`, `Alta`, `Média`, `Baixa`).
+6. **`helpdesk.SLA`**: Tempo máximo em horas contratado para resolução conforme a prioridade.
+7. **`helpdesk.Chamado`**: Registro de ticket com protocolo, prazos automáticos de SLA, parecer técnico e isolamento por inquilino.
 
 ---
 
-## 🚀 2. Como Executar
+## 🏢 2. Multi-organização: Isolamento de Dados (Aula 14)
+
+### Estratégia Escolhida: Coluna Discriminadora
+Conforme preconizado na Aula 14 (slide 6), foi adotada a estratégia de **Coluna Discriminadora** através de chave estrangeira (`ForeignKey('core.Organizacao', on_delete=models.PROTECT)`), viabilizada pela classe abstrata `DaOrganizacao`.
+
+### Migração sem Perda de Dados em 3 Etapas (Slides 9 e 10):
+1. **`0002_add_org_fields`**: Adição das FKs de organização em `Equipe`, `Categoria` e `Chamado` com `null=True`.
+2. **`0003_dados_org`**: Migração de dados via `migrations.RunPython`, preenchendo automaticamente todos os registros existentes da P1 com uma `Organização Padrão`.
+3. **`0004_alter_org_not_null_and_constraints`**: Conversão das FKs para `null=False`, remoção de unicidade global de protocolos e aplicação de `UniqueConstraint` e índices por organização.
+
+### Blindagem de Segurança Aplicada:
+* **`org_atual(request)`**: Ponto único centralizador em `core/utils.py` que obtém a organização do usuário logado.
+* **Toda Consulta Filtra:** Todas as views e querysets partem de `filter(organizacao=org)`.
+* **Criação de Registros com `commit=False`:** A organização é atribuída programaticamente a partir da sessão do usuário logado; o campo `organizacao` nunca é exposto em formulários HTML.
+* **Proteção contra IDOR (Acesso Indevido por ID):** Rotas de detalhes utilizam `get_object_or_404(Chamado, id=id, organizacao=org)`. IDs de outras organizações retornam **HTTP 404**, sem vazar a existência do recurso.
+* **Selects Blindados:** O `<select>` de categorias filtra estritamente `Categoria.objects.filter(organizacao=org, ativa=True)`.
+* **Unicidade Escopada por Tenant:** Unicidade de protocolo alterada de global para `UniqueConstraint(fields=['organizacao', 'protocolo'])`. Clientes distintos podem ter protocolos com mesmo identificador sem conflito.
+
+---
+
+## ⚡ 3. API REST com Django REST Framework (Aula 13)
+
+Endpoints REST estruturados com autenticação por sessão/básico e permissão `IsAuthenticated`:
+
+| Método | Endpoint | Descrição | Isolamento Multi-tenant |
+|---|---|---|---|
+| `GET` | `/api/chamados/` | Lista chamados com paginação | Apenas chamados da organização do usuário |
+| `POST` | `/api/chamados/` | Abre novo chamado | Injeta organização atual no `perform_create` |
+| `GET` | `/api/chamados/<id>/` | Detalha chamado específico | Retorna 404 se pertencer a outro inquilino |
+| `PUT/PATCH`| `/api/chamados/<id>/` | Atualiza chamado | Restrito aos chamados da organização |
+| `GET` | `/api/categorias/` | Lista categorias | Apenas categorias da organização |
+| `POST` | `/api/categorias/` | Cadastra nova categoria | Vinculada à organização |
+| `GET` | `/api/prioridades/`| Lista prioridades e SLAs | Tabela de referência |
+| `GET` | `/api/dashboard/` | Métricas agregadas do dashboard | Responde JSON estruturado (Aula 17, slide 35) |
+
+---
+
+## 📊 4. Dashboard e Relatórios (Aula 17)
+
+O painel `/dashboard/` responde a 4 perguntas analíticas essenciais do gestor:
+1. **Totalizadores (KPIs com `aggregate`):**
+   * Total de Chamados no período
+   * Chamados Abertos / Em Atendimento
+   * Chamados Resolvidos / Fechados
+   * Chamados Fora do Prazo (SLA Violado/Estourado)
+2. **Ranking (Top 5 com `values() + annotate(Count) + order_by`):**
+   * Categorias de incidente com maior demanda.
+3. **Série Temporal (`TruncMonth`):**
+   * Agrupamento mensal da abertura de chamados com ordenação cronológica.
+4. **Distribuição (`values() + annotate(Count)`):**
+   * Proporção de incidentes por prioridade.
+
+### Filtro por Período Validado (`PeriodoForm`):
+Protege o sistema contra strings malformadas na URL (`?inicio=...&fim=...`), evitando erros 500 decorrentes de parâmetros inválidos.
+
+### Gráficos com Chart.js (`json_script`):
+Os dados agregados pelo ORM são serializados no template de forma segura via `{{ dados_mes|json_script:"dados-mes" }}` e renderizados dinamicamente pelo Chart.js.
+
+### Exportação em CSV (`/chamados/exportar/`):
+Exporta o relatório consolidado de chamados em formato tabular com cabeçalhos formatados e encoding UTF-8 com BOM (compatível com Microsoft Excel), respeitando a organização e os filtros de período aplicados.
+
+### Prevenção de Consultas N+1:
+Implementação de `select_related('categoria', 'prioridade', 'categoria__equipe')` em todas as rotas de listagem, detalhes e exportação. Validado via teste automatizado com `assertNumQueries(1)`.
+
+---
+
+## 🧪 5. Testes Automatizados e Prova de Isolamento
+
+A suíte de testes automatizados cobre 100% dos fluxos da P1 e as novas exigências da P2:
 
 ```bash
-cd "Laboratório de Programação Full Stack/p1_prova/marcos"
+python manage.py test
+```
+
+### Resultados da Execução:
+* **`HelpDeskP1Testes`**:
+  * Criação das entidades base (Equipe, Categoria, Prioridade, SLA, Chamado).
+  * Acesso HTTP 200 nas rotas principais.
+  * Cálculo automático de prazo de SLA e transição de status para resolvido.
+  * Feature 1: Busca textual e filtros combinados com `Q()`.
+  * Feature 2: Validações customizadas de SLA, chamados críticos e encerramento técnico.
+* **`MultiTenantIsolamentoTestes`** (Roteiro da Aula 14, slide 18):
+  * `test_usuario_a_abre_lista_e_ve_so_chamados_da_org_a` (✅ Aprovado)
+  * `test_usuario_a_abre_id_da_org_b_retorna_404` (✅ Aprovado)
+  * `test_usuario_a_cria_chamado_gravado_com_org_a` (✅ Aprovado)
+  * `test_formulario_selects_mostram_apenas_categorias_da_org_a` (✅ Aprovado)
+  * `test_tentativa_de_usar_categoria_de_outra_org_no_form_e_rejeitada` (✅ Aprovado)
+  * `test_unicidade_de_protocolo_por_organizacao` (✅ Aprovado)
+* **`ApiRestDRFTestes`** (Aula 13):
+  * `test_api_requer_autenticacao` (✅ Aprovado)
+  * `test_api_retorna_apenas_chamados_da_propria_org` (✅ Aprovado)
+  * `test_api_post_inicia_chamado_com_org_do_usuario` (✅ Aprovado)
+  * `test_api_detalhes_de_outra_org_retorna_404` (✅ Aprovado)
+* **`DashboardERelatoriosTestes`** (Aula 17):
+  * `test_dashboard_carrega_com_sucesso` (✅ Aprovado)
+  * `test_filtro_periodo_invalido_nao_gera_500` (✅ Aprovado)
+  * `test_exportar_csv_gera_arquivo_correto` (✅ Aprovado)
+  * `test_assert_num_queries_sem_n_mais_um` (✅ Aprovado - trava performance com `assertNumQueries(1)`)
+
+---
+
+## 🚀 6. Como Executar Localmente
+
+### Pré-requisitos:
+* Python 3.10+
+* Virtualenv configurado
+
+```bash
+# 1. Clonar e entrar no repositório
+git clone https://github.com/Marcos-Estrela16/marcio_p1_helpdesk.git
+cd marcio_p1_helpdesk
+
+# 2. Criar e ativar ambiente virtual
+python -m venv venv
+# No Windows:
+venv\Scripts\activate
+# No Linux/Mac:
 source venv/bin/activate
+
+# 3. Instalar dependências
+pip install -r requirements.txt
+
+# 4. Executar as migrações (incluindo migração de dados de multi-tenancy)
 python manage.py migrate
+
+# 5. Executar os testes automatizados
+python manage.py test
+
+# 6. Iniciar o servidor
 python manage.py runserver
 ```
 
-Acesse: **`http://127.0.0.1:8000/`**  
-Admin: **`http://127.0.0.1:8000/admin/`** (User: `admin` | Senha: `admin123`)
+Acesse:
+* **Aplicação Web:** `http://127.0.0.1:8000/`
+* **Dashboard & Relatórios:** `http://127.0.0.1:8000/dashboard/`
+* **API REST DRF:** `http://127.0.0.1:8000/api/chamados/`
+* **Django Admin:** `http://127.0.0.1:8000/admin/`
 
 ---
 
-## 📋 3. Relatório das Features Obrigatórias da Avaliação P1
-
-### 🔍 Feature 1 — Busca e Filtro na Listagem Principal
-
-- **Campos e Filtros Escolhidos:**
-  - **Busca Textual Aberta (`q`):** Pesquisa case-insensitive (`icontains`) combinada nos campos `titulo`, `descricao`, `protocolo` e `solicitante_nome`.
-  - **Filtros Categóricos:** Seletores `<select>` para **Status** (`aberto`, `em_atendimento`, `resolvido`, `fechado`), **Prioridade** e **Categoria**.
-  - **Desafio Extra Implementado:** Utilização do objeto `Q()` (`from django.db.models import Q`) para compor dinamicamente a cláusula SQL na mesma consulta, integrando filtros relacionais e a busca textual multifatorial.
-- **Justificativa da Escolha:**
-  Em uma central de suporte técnico ou NOC, o volume de chamados cresce rapidamente. A busca por palavras-chave técnicas (ex: "Postgres", "VPN", "queda") ou pelo nome do cliente e protocolo permite atendimento imediato quando o solicitante entra em contato. Combinar isso com o filtro de status permite que os operadores filtrem rapidamente apenas os chamados em aberto que demandam ação urgente.
-- **O que aconteceria se não existisse:**
-  Os analistas de suporte precisariam percorrer visualmente páginas inteiras de registros para localizar um incidente específico. A ausência de filtros por prioridade e status impediria a identificação ágil de chamados críticos pendentes, resultando no estouro generalizado de prazos de SLA e degradação da qualidade do suporte.
-
----
-
-### 🛡️ Feature 2 — Validação Customizada no Formulário (ModelForm)
-
-- **Regras de Negócio Implementadas no `clean()`:**
-  1. **Validação do Prazo de SLA (Rubrica Oficial P1):** O prazo de SLA calculado não pode ser anterior ou igual à data de abertura do chamado (`prazo_sla > data_abertura`).
-  2. **Qualidade de Triagem para Incidentes Críticos:** Chamados classificados com prioridade **Crítica** exigem obrigatoriamente um detalhamento técnico do problema com no mínimo 30 caracteres (`clean()`).
-  3. **Validação de Assunto Vago:** O campo de assunto (`titulo`) deve possuir no mínimo 5 caracteres e não aceita termos genéricos como "teste", "ajuda", "problema" ou "socorro" (`clean_titulo()`).
-  4. **Encerramento Técnico com Parecer:** No `ResolverChamadoForm`, a finalização do chamado para "resolvido" ou "fechado" exige o preenchimento de uma solução técnica conclusiva com pelo menos 10 caracteres.
-- **Justificativa da Escolha:**
-  O cálculo automático e a auditoria do SLA são o core business do sistema. Se o prazo projetado fosse igual ou inferior ao instante de criação (como em caso de horas de SLA zeradas ou inconsistência temporal), o chamado já nasceria com status de SLA violado e sem conformidade. Além disso, incidentes críticos disparam escala de plantão; impedir descrições superficiais (ex: "caiu") força o solicitante a fornecer contexto mínimo para diagnóstico imediato.
-- **O que aconteceria se não existisse:**
-  O banco de dados seria corrompido com registros de tickets com prazos de SLA matematicamente absurdos (datas passadas ou nulas), distorcendo os indicadores de conformidade e auditoria. Ademais, analistas perderiam horas preciosas tentando descobrir o que aconteceu em chamados críticos sem qualquer detalhamento técnico.
-
+## 📄 7. Documentos Complementares
+* **[`MELHORIAS_P1.md`](MELHORIAS_P1.md)**: Relatório de dívida técnica, justificativas de arquitetura e refatorações realizadas na transição P1 → P2 (Aula 13, slide 5).

@@ -6,7 +6,7 @@
 <div class="page-header">
     <div>
         <h2>Fila de Atendimento</h2>
-        <p class="subtitle">Monitoramento de prazos acordados de SLA e chamados abertos.</p>
+        <p class="subtitle">Monitoramento de prazos acordados de SLA da organização: <strong>{{ organizacao_atual.nome }}</strong>.</p>
     </div>
     <div class="stats-grid">
         <div class="stat-box">
@@ -36,7 +36,10 @@
                 <span class="text-muted" style="font-size: 0.85rem;">Exibindo {{ total_filtrados }} de {{ total_chamados }} chamado(s)</span>
             {% endif %}
         </div>
-        <a href="{% url 'novo_chamado' %}" class="btn btn-sm btn-primary">+ Novo Chamado</a>
+        <div style="display: flex; gap: 8px;">
+            <a href="{% url 'exportar_csv' %}" class="btn btn-sm" style="background: #10b981; color: white; text-decoration: none;">📥 Exportar CSV</a>
+            <a href="{% url 'novo_chamado' %}" class="btn btn-sm btn-primary">+ Novo Chamado</a>
+        </div>
     </div>
 
     <!-- Barra de Busca e Filtros (Feature 1 - Busca e Filtro na Listagem) -->

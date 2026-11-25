@@ -3,6 +3,31 @@ from django import forms
 from django.utils import timezone
 from .models import Chamado, Categoria, Prioridade
 
+class PeriodoForm(forms.Form):
+    """
+    Formulário para validação de filtro de período (Aula 17, slide 11).
+    Evita erros 500 decorrentes de strings malformadas passadas via query params.
+    """
+    inicio = forms.DateField(
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+        label="Data Inicial",
+    )
+    fim = forms.DateField(
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+        label="Data Final",
+    )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        inicio = cleaned_data.get("inicio")
+        fim = cleaned_data.get("fim")
+        if inicio and fim and inicio > fim:
+            raise forms.ValidationError("A data inicial não pode ser posterior à data final.")
+        return cleaned_data
+
+
 class ChamadoForm(forms.ModelForm):
     class Meta:
         model = Chamado
@@ -16,6 +41,16 @@ class ChamadoForm(forms.ModelForm):
             "descricao": forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "Descreva os sintomas do problema detalhadamente..."}),
         }
 
+    def __init__(self, *args, org=None, **kwargs):
+        """
+        Blindagem de formulário (Aula 14, slide 15):
+        Filtra o queryset de campos relacionados (Categoria) exclusivamente pela organização do usuário logado.
+        """
+        super().__init__(*args, **kwargs)
+        self.org = org
+        if org:
+            self.fields["categoria"].queryset = Categoria.objects.filter(organizacao=org, ativa=True)
+
     def clean_titulo(self):
         """Validação customizada do campo 'titulo' (mínimo 5 caracteres e sem termos vagos)."""
         titulo = self.cleaned_data.get("titulo", "").strip()
@@ -28,15 +63,20 @@ class ChamadoForm(forms.ModelForm):
 
     def clean(self):
         """
-        Validação customizada de domínio (Feature 2):
-        1. Regra Oficial da Rubrica P1: O prazo de SLA não pode ser anterior ou igual à data de abertura do chamado.
-        2. Regra de Negócio de Help Desk: Chamados com prioridade 'Crítica' exigem detalhamento mínimo de 30 caracteres.
-        3. Validação de integridade: Categoria selecionada deve estar ativa.
+        Validação customizada de domínio (Feature 2 & Multi-tenancy):
+        1. Validação de isolamento: Categoria deve pertencer à organização atual.
+        2. Regra da Rubrica P1: Prazo de SLA não pode ser anterior ou igual à data de abertura.
+        3. Chamados com prioridade 'Crítica' exigem detalhamento mínimo de 30 caracteres.
+        4. Categoria selecionada deve estar ativa.
         """
         cleaned_data = super().clean()
         prioridade = cleaned_data.get("prioridade")
         descricao = cleaned_data.get("descricao", "").strip()
         categoria = cleaned_data.get("categoria")
+
+        # 0. Blindagem de isolamento multi-tenant
+        if self.org and categoria and categoria.organizacao_id != self.org.id:
+            self.add_error("categoria", "A categoria selecionada não pertence à sua organização.")
 
         # 1. Regra Oficial da Avaliação P1: O prazo do SLA não pode ser anterior à data de abertura
         if prioridade:
@@ -88,4 +128,3 @@ class ResolverChamadoForm(forms.ModelForm):
                     "Para encerrar ou resolver o chamado, é obrigatório registrar um parecer técnico detalhado da solução (mínimo de 10 caracteres)."
                 )
         return cleaned_data
-
