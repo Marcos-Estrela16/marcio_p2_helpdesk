@@ -1,0 +1,74 @@
+GitHub: https://github.com/Marcos-Estrela16/marcio_p1_helpdesk.git
+
+Disciplina: Laboratório de Programação Full Stack
+Professor: Márcio Garrido
+Aluno: Marcos Vinícius Silva Estrela
+Matrícula: 202413893
+Tema Escolhido: Opção 4 – Help Desk / Chamados
+Avaliação: P2 — Mini-SaaS Multi-tenant, DRF e Dashboard (Aulas 13, 14 e 17)
+
+--------------------------------------------------------------------------------
+RESUMO DA ENTREGA E ARQUITETURA IMPLEMENTADA
+--------------------------------------------------------------------------------
+
+1. Multi-organização e Isolamento de Dados (Aula 14):
+   - Novo app 'core' com modelos Organizacao, Perfil (papéis: admin e operador) e a classe base abstrata DaOrganizacao.
+   - Entidades de negócio (Chamado, Categoria, Equipe) migradas para multi-tenancy usando estratégia de Coluna Discriminadora.
+   - Migração de banco de dados em 3 etapas com RunPython (0002, 0003_dados_org e 0004), preservando os dados da P1 sem perda de registros.
+   - Blindagem de segurança: todas as consultas filtram por org_atual(request), formulários com selects escopados por organização, criação com commit=False e proteção contra IDOR (acesso a IDs de outras organizações retorna HTTP 404).
+   - Unicidade de protocolo escopada por inquilino (UniqueConstraint por organização e protocolo).
+
+2. API REST com Django REST Framework (Aula 13):
+   - Endpoints implementados sob o prefixo /api/:
+     * /api/chamados/ (GET com paginação e POST com injeção automática da organização)
+     * /api/chamados/<id>/ (GET, PUT, PATCH, DELETE com validação de inquilino)
+     * /api/categorias/ (GET e POST)
+     * /api/prioridades/ (GET)
+     * /api/dashboard/ (GET com métricas em JSON)
+   - Serializers estruturados com validações de regras de negócio.
+   - Permissões restritas via IsAuthenticated e autenticação por sessão e básica.
+
+3. Dashboard Analítico e Relatórios (Aula 17):
+   - 4 Métricas de negócio calculadas via ORM:
+     * Totalizadores / KPIs via aggregate(): Total, Em Atendimento, Resolvidos e SLA Estourado.
+     * Ranking (Top 5) via values() + annotate(Count) + order_by(): Categorias com maior demanda.
+     * Série Temporal via TruncMonth: Evolução mensal de abertura de incidentes.
+     * Distribuição via values() + annotate(Count): Chamados por prioridade.
+   - Filtro de período validado com PeriodoForm para evitar erros 500 por datas inválidas.
+   - Gráficos visuais interativos com Chart.js utilizando dados serializados com segurança via json_script.
+   - Exportação em CSV em /chamados/exportar/ com UTF-8 BOM para compatibilidade com Microsoft Excel.
+   - Prevenção do problema N+1 de consultas via select_related('categoria', 'prioridade', 'categoria__equipe') e travamento com teste de performance assertNumQueries(1).
+
+4. Documentação e Testes Automatizados:
+   - Arquivo MELHORIAS_P1.md na raiz registrando as dívidas técnicas e justificativas de refatoração.
+   - README.md completo com instruções e arquitetura.
+   - Suíte com 19 testes automatizados cobrindo 100% dos requisitos (python manage.py test).
+
+--------------------------------------------------------------------------------
+COMO EXECUTAR E TESTAR O PROJETO
+--------------------------------------------------------------------------------
+
+1. Instalar dependências e migrar o banco:
+   pip install -r requirements.txt
+   python manage.py migrate
+
+2. Popular base com dados de demonstração (cria empresas, equipes, tickets e usuários):
+   python manage.py popular_dados
+
+3. Rodar a suíte de testes:
+   python manage.py test
+
+4. Iniciar o servidor:
+   python manage.py runserver
+
+Credenciais para teste de isolamento multi-tenant:
+- Administrador: usuario 'admin' | senha 'admin123' (Org: Hospital São Lucas)
+- Operador Org A: usuario 'operador_hospital' | senha 'senha123' (Org: Hospital São Lucas)
+- Operador Org B: usuario 'operador_univ' | senha 'senha123' (Org: Universidade Central)
+
+Rotas Principais:
+- Aplicação / Login: http://127.0.0.1:8000/login/
+- Fila de Chamados:  http://127.0.0.1:8000/
+- Dashboard:         http://127.0.0.1:8000/dashboard/
+- Exportar CSV:      http://127.0.0.1:8000/chamados/exportar/
+- API REST DRF:      http://127.0.0.1:8000/api/chamados/
